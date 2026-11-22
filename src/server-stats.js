@@ -8,6 +8,7 @@ const COUNTERS = [
 const CHANNEL_TYPES = { voice: 2, category: 4 };
 const CONNECT_PERMISSION = '1048576';
 const MAX_BACKOFF_MS = 24 * 60 * 60 * 1000;
+const PERMISSION_RETRY_MS = 5 * 60 * 1000;
 
 function finitePositive(value) {
   const n = Number(value);
@@ -66,7 +67,12 @@ export async function updateServerStats({
       error.global = body?.global === true || response.headers?.get?.('x-ratelimit-global') === 'true';
       throw error;
     }
-    if (!response.ok) throw new Error(`Discord ${method} ${path} failed (HTTP ${response.status})`);
+    if (!response.ok) {
+      const error = new Error(`Discord ${method} ${path} failed (HTTP ${response.status}, code ${Number.isInteger(body?.code) ? body.code : 'unknown'})`);
+      error.status = response.status;
+      error.discordCode = Number.isInteger(body?.code) ? body.code : null;
+      throw error;
+    }
     return { body, headers: response.headers };
   }
   if (cooldowns._global && cooldowns._global > clock) {
@@ -111,7 +117,7 @@ export async function updateServerStats({
     })).body;
   }
   const result = { members: guild.approximate_member_count, online: guild.approximate_presence_count,
-    categoryId: category.id, updated: [], unchanged: [], created: [], deferred: [], cooldowns };
+    categoryId: category.id, updated: [], unchanged: [], created: [], deferred: [], blocked: [], cooldowns };
   for (const counter of COUNTERS) {
     const name = `${counter.prefix}${guild[counter.countKey].toLocaleString('en-US')}`;
     const existing = channels.find(c =>
@@ -144,11 +150,29 @@ export async function updateServerStats({
       if (delay) cooldowns[existing.id] = clock + delay;
       else delete cooldowns[existing.id];
     } catch (error) {
+      if (error.status === 403) {
+        // Discord denies a channel rename when this bot lacks effective
+        // Manage Channels access on the category or voice channel.
+        // Keep checking other counters, but do not hammer the denied channel.
+        cooldowns[existing.id] = clock + PERMISSION_RETRY_MS;
+        result.blocked.push({
+          counter: counter.key,
+          channelId: existing.id,
+          reason: 'Discord denied the channel rename. Allow View Channel and Manage Channels for the Server Stats bot.',
+          discordCode: error.discordCode,
+          retryAfterSeconds: PERMISSION_RETRY_MS / 1000,
+        });
+        console.warn('[server-stats] Discord denied counter rename (HTTP 403)', {
+          counter: counter.key, channelId: existing.id, discordCode: error.discordCode,
+        });
+        continue;
+      }
       if (!error.rateLimited) throw error;
       const key = error.global ? '_global' : existing.id;
       cooldowns[key] = clock + error.retryMs;
       result.deferred.push({ counter: counter.key, channelId: existing.id, retryAfterSeconds: Math.ceil(error.retryMs / 1000) });
     }
   }
+  result.partial = result.blocked.length > 0;
   return result;
 }

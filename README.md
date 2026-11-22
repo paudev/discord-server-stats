@@ -40,3 +40,9 @@ npm run check
 ```
 
 The test suite covers rate-limit handling, per-channel cooldowns, global cooldowns, and Worker-to-Vercel payloads.
+
+## Discord channel permissions and HTTP 403
+
+If the Cloudflare Worker reports a Vercel 502 and Vercel logs show `Discord PATCH /channels/... failed (HTTP 403)`, the bot cannot rename a counter voice channel. In **Discord → Edit Category → SERVER STATS → Permissions**, explicitly give the **Server Stats bot** **View Channel** and **Manage Channels**. Check the permissions of both **Members** and **Online** voice channels as well; they may override the category.
+
+The Vercel API now reports denied rename attempts as `ok: true, partial: true` with a `blocked` array and channel IDs. The Cloudflare Worker logs a warning rather than failing the scheduled invocation. A blocked channel is checked again after a five-minute backoff; the other counter can continue updating. A manual authenticated POST without previously supplied cooldown data checks immediately after you fix the permissions. This does not bypass Discord permissions or guarantee every-minute channel renames.

@@ -101,3 +101,47 @@ test('Worker sends and returns persisted backoff state', async () => {
   assert.deepEqual(data, { cooldowns: { [memberId]: 500 } });
   assert.equal(response.cooldowns[memberId], 600);
 });
+
+test('Discord 403 on one channel is reported as blocked rather than crashing the whole refresh', async () => {
+  const { fetcher, calls } = fetchFixture(path => path.endsWith(memberId)
+    ? { status: 403, body: { code: 50013, message: 'Missing Permissions' } }
+    : {});
+  const res = await updateServerStats({ ...common, fetcher });
+  assert.equal(res.members, 2021);
+  assert.equal(res.partial, true);
+  assert.deepEqual(res.blocked.map(item => item.counter), ['members']);
+  assert.equal(res.blocked[0].discordCode, 50013);
+  assert.equal(res.blocked[0].channelId, memberId);
+  assert.equal(res.updated.length, 1);
+  assert.equal(res.cooldowns[memberId], FIXED_NOW + 300000);
+  assert.equal(calls.filter(item => item.method === 'PATCH').length, 2);
+});
+
+test('permission denied channel is not retried at each one-minute scheduled tick', async () => {
+  const { fetcher, calls } = fetchFixture(path => path.endsWith(memberId)
+    ? { status: 403, body: { code: 50013 } }
+    : {});
+  const first = await updateServerStats({ ...common, fetcher });
+  const second = await updateServerStats({
+    ...common, fetcher, now: () => FIXED_NOW + 60000, cooldowns: first.cooldowns,
+  });
+  assert.equal(second.blocked.length, 0);
+  assert.equal(second.deferred[0].counter, 'members');
+  assert.equal(second.deferred[0].retryAfterSeconds, 240);
+  assert.equal(calls.filter(item => item.path === `/channels/${memberId}`).length, 1);
+});
+
+test('corrected Discord permissions allow another rename after cooldown', async () => {
+  let denied = true;
+  const { fetcher } = fetchFixture(path => path.endsWith(memberId) && denied
+    ? { status: 403, body: { code: 50013 } }
+    : {});
+  const first = await updateServerStats({ ...common, fetcher });
+  denied = false;
+  const second = await updateServerStats({
+    ...common, fetcher, now: () => FIXED_NOW + 300001, cooldowns: first.cooldowns,
+  });
+  assert.equal(second.blocked.length, 0);
+  assert.equal(second.partial, false);
+  assert.ok(second.updated.some(item => item.counter === 'members'));
+});

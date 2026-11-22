@@ -15,7 +15,8 @@ export class StatsSync extends DurableObject {
     try {
       const result = await this.pending;
       return Response.json({ ok: true, updated: result.updated?.length ?? 0,
-        deferred: result.deferred?.length ?? 0, unchanged: result.unchanged?.length ?? 0 });
+        deferred: result.deferred?.length ?? 0, blocked: result.blocked?.length ?? 0,
+        unchanged: result.unchanged?.length ?? 0, partial: result.partial === true });
     } finally {
       this.pending = null;
     }
@@ -29,7 +30,11 @@ export default {
       throw new Error(`Stats scheduler failed (HTTP ${response.status})`);
     }
     const data = await response.json();
-    console.log('[discord-stats-scheduler]', JSON.stringify(data));
+    if (data.partial || data.blocked > 0) {
+      console.warn('[discord-stats-scheduler] Discord permissions blocked counter updates', JSON.stringify(data));
+    } else {
+      console.log('[discord-stats-scheduler]', JSON.stringify(data));
+    }
   },
   fetch() {
     return new Response('Discord Server Stats scheduler is deployed.', {
