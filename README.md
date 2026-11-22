@@ -54,3 +54,7 @@ Discord can implicitly deny **Manage Channels** when **Connect** is denied on a 
 ### Read-only live endpoint
 
 `GET https://discord-server-stats.vercel.app/api/stats` with `Authorization: Bearer <DISCORD_STATS_TRIGGER_SECRET>` returns the approximate Discord member/online counts and compares each existing counter channel name against the expected value. This endpoint does not rename channels or consume a scheduled update. It is protected by the same trigger secret as `POST /api/server-stats` and never returns credentials.
+
+### Scheduled check observability
+
+Each authenticated scheduled `POST /api/server-stats` writes a sanitized `[server-stats:sync]` summary in Vercel runtime logs. It includes source counts and which channels updated, were unchanged, deferred or blocked, without bot tokens or trigger secrets. This helps distinguish permission fixes from rate-limit cooldowns and confirms successful checks. The existing Cloudflare Cron Trigger and voice-channel behavior are unchanged.

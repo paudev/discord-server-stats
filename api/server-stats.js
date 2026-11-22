@@ -26,6 +26,16 @@ export default async function handler(req, res) {
       categoryId: process.env.DISCORD_STATS_CATEGORY_ID || undefined,
       cooldowns: req.body?.cooldowns,
     });
+    console.log('[server-stats:sync]', JSON.stringify({
+      members: result.members ?? null,
+      online: result.online ?? null,
+      updated: result.updated?.map(item => item.counter) ?? [],
+      created: result.created?.map(item => item.counter) ?? [],
+      unchanged: result.unchanged ?? [],
+      deferred: result.deferred?.map(item => item.counter) ?? [],
+      blocked: result.blocked?.map(item => ({ counter: item.counter, discordCode: item.discordCode })) ?? [],
+      skippedGlobal: result.skippedGlobal === true,
+    }));
     return res.status(200).json({ ok: true, ...result });
   } catch (error) {
     console.error('[server-stats]', error.message);
