@@ -11,6 +11,7 @@ function mockFetch({ channels, guild = { approximate_member_count: 2021, approxi
     let response;
     if (path === `/guilds/${guildId}`) response = guild;
     else if (path === `/guilds/${guildId}/channels` && init.method === 'GET') response = channels;
+    else if (path === '/users/@me' && init.method === 'GET') response = { id: '523456789012345678' };
     else if (path === `/guilds/${guildId}/channels` && init.method === 'POST') response = { id: `${223456789012345679n + BigInt(calls.length)}`, ...JSON.parse(init.body) };
     else if (path.startsWith('/channels/') && init.method === 'PATCH') response = { id: path.split('/')[2], ...JSON.parse(init.body) };
     else throw new Error(`Unexpected request: ${path}`);
@@ -29,6 +30,10 @@ test('creates a category and two locked voice counters', async () => {
   assert.equal(posted[0].data.name, '📊 SERVER STATS');
   assert.deepEqual(posted.slice(1).map(c => c.data.name), ['👥 Members: 2,021', '🟢 Online: 374']);
   assert.equal(posted[1].data.permission_overwrites[0].deny, '1048576');
+  assert.equal(posted[1].data.permission_overwrites[1].id, '523456789012345678');
+  assert.equal(posted[1].data.permission_overwrites[1].type, 1);
+  assert.equal(posted[1].data.permission_overwrites[1].allow, '1049616');
+  assert.equal(calls.filter(c => c.path === '/users/@me').length, 1);
 });
 
 test('skips changes when names already match', async () => {

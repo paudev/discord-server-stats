@@ -46,3 +46,11 @@ The test suite covers rate-limit handling, per-channel cooldowns, global cooldow
 If the Cloudflare Worker reports a Vercel 502 and Vercel logs show `Discord PATCH /channels/... failed (HTTP 403)`, the bot cannot rename a counter voice channel. In **Discord → Edit Category → SERVER STATS → Permissions**, explicitly give the **Server Stats bot** **View Channel** and **Manage Channels**. Check the permissions of both **Members** and **Online** voice channels as well; they may override the category.
 
 The Vercel API now reports denied rename attempts as `ok: true, partial: true` with a `blocked` array and channel IDs. The Cloudflare Worker logs a warning rather than failing the scheduled invocation. A blocked channel is checked again after a five-minute backoff; the other counter can continue updating. A manual authenticated POST without previously supplied cooldown data checks immediately after you fix the permissions. This does not bypass Discord permissions or guarantee every-minute channel renames.
+
+### Locked voice channels need an explicit bot exception
+
+Discord can implicitly deny **Manage Channels** when **Connect** is denied on a voice channel. Newly created counters now explicitly give the bot member **View Channel, Connect, Manage Channels**, while denying Connect to `@everyone`. For existing counters that were created without the exception, grant these three permissions to the **bot itself** under each existing counter voice channel's **Edit Channel → Permissions**. The bot cannot automatically repair a channel it no longer has permission to access; a manual permission change is necessary. Discord error code `50001` means Missing Access (different from `50013` Missing Permissions).
+
+### Read-only live endpoint
+
+`GET https://discord-server-stats.vercel.app/api/stats` with `Authorization: Bearer <DISCORD_STATS_TRIGGER_SECRET>` returns the approximate Discord member/online counts and compares each existing counter channel name against the expected value. This endpoint does not rename channels or consume a scheduled update. It is protected by the same trigger secret as `POST /api/server-stats` and never returns credentials.

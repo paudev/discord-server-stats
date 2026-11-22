@@ -7,6 +7,9 @@ const COUNTERS = [
 ];
 const CHANNEL_TYPES = { voice: 2, category: 4 };
 const CONNECT_PERMISSION = '1048576';
+// The bot must be allowed to CONNECT even though @everyone is denied.
+// Discord implicitly masks Manage Channels when voice CONNECT is denied.
+const BOT_VOICE_PERMISSIONS = String(1048576n | 1024n | 16n);
 const MAX_BACKOFF_MS = 24 * 60 * 60 * 1000;
 const PERMISSION_RETRY_MS = 5 * 60 * 1000;
 
@@ -118,17 +121,25 @@ export async function updateServerStats({
   }
   const result = { members: guild.approximate_member_count, online: guild.approximate_presence_count,
     categoryId: category.id, updated: [], unchanged: [], created: [], deferred: [], blocked: [], cooldowns };
+  let botUserId = null;
   for (const counter of COUNTERS) {
     const name = `${counter.prefix}${guild[counter.countKey].toLocaleString('en-US')}`;
     const existing = channels.find(c =>
       c.type === CHANNEL_TYPES.voice && c.parent_id === category.id && c.name.startsWith(counter.prefix)
     );
     if (!existing) {
+      if (!botUserId) {
+        botUserId = (await discord('/users/@me')).body?.id;
+        if (!/^\d{16,22}$/.test(botUserId ?? '')) throw new Error('Cannot identify Server Stats bot for counter permissions');
+      }
       const created = (await discord(`/guilds/${guildId}/channels`, 'POST', {
         name,
         type: CHANNEL_TYPES.voice,
         parent_id: category.id,
-        permission_overwrites: [{ id: guildId, type: 0, allow: '0', deny: CONNECT_PERMISSION }],
+        permission_overwrites: [
+          { id: guildId, type: 0, allow: '0', deny: CONNECT_PERMISSION },
+          { id: botUserId, type: 1, allow: BOT_VOICE_PERMISSIONS, deny: '0' },
+        ],
       })).body;
       result.created.push({ counter: counter.key, channelId: created.id });
       continue;
@@ -158,7 +169,9 @@ export async function updateServerStats({
         result.blocked.push({
           counter: counter.key,
           channelId: existing.id,
-          reason: 'Discord denied the channel rename. Allow View Channel and Manage Channels for the Server Stats bot.',
+          reason: error.discordCode === 50001
+            ? 'Missing Access: allow View Channel, Connect and Manage Channels for the Server Stats bot on this voice channel.'
+            : 'Missing Permissions: allow View Channel, Connect and Manage Channels for the Server Stats bot on this voice channel.',
           discordCode: error.discordCode,
           retryAfterSeconds: PERMISSION_RETRY_MS / 1000,
         });
