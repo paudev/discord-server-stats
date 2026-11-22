@@ -5,7 +5,7 @@ Standalone Discord voice-channel counters hosted on **Vercel**, with an independ
 ## Architecture
 
 - **Vercel:** serves the Discord REST API updater in `api/server-stats.js` and auto-deploys on GitHub `main` pushes.
-- **Cloudflare Workers:** runs the `worker/index.js` scheduled handler every 10 minutes, calling the authenticated Vercel updater.
+- **Cloudflare Workers:** runs the `worker/index.js` scheduled handler every 5 minutes, calling the authenticated Vercel updater.
 - **Discord:** the updater creates and refreshes a `📊 SERVER STATS` category with `👥 Members` and `🟢 Online` counters using Discord's approximate counts.
 
 ## Configure Vercel (one time)
@@ -41,7 +41,7 @@ After creating the Worker, go to **Settings → Variables and Secrets** and crea
 
 Save/deploy the secret. **Never paste credentials into `wrangler.jsonc` or commit them to GitHub.**
 
-The 10-minute schedule `*/10 * * * *` is already in `wrangler.jsonc` and is deployed with the Worker. Cloudflare may take several minutes for a new Cron Trigger to become active. After setup, verify the Worker's **Observability / Logs** and its **Cron Triggers** configuration. A 401 response indicates the Cloudflare and Vercel secrets differ.
+The 5-minute schedule `*/5 * * * *` is already in `wrangler.jsonc` and is deployed with the Worker. Cloudflare may take several minutes for a new Cron Trigger to become active. After setup, verify the Worker's **Observability / Logs** and its **Cron Triggers** configuration. A 401 response indicates the Cloudflare and Vercel secrets differ.
 
 Vercel and Cloudflare Git integrations will each deploy their own entry point on new pushes to `main`. Vercel handles the API; Cloudflare handles scheduling. They are separate deployments of one repository.
 
@@ -51,4 +51,4 @@ Vercel and Cloudflare Git integrations will each deploy their own entry point on
 - Worker health: the Worker's `*.workers.dev` URL returns a static healthy response but does **not** run an update when visited
 - Local tests: `npm test`, `npm run check`
 
-Discord voice-channel renames have rate limits; updates are skipped when counts haven't changed. Keep the interval at 10 minutes or slower.
+Discord voice-channel renames have restrictive, per-channel rate limits (historically around two renames per ten minutes). Five-minute checks are best-effort, and Discord can delay an actual rename with an HTTP 429. The updater skips unchanged values and the Worker makes no immediate retry.
