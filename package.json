@@ -8,6 +8,11 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check api/server-stats.js && node --check src/server-stats.js"
+    "check": "node --check api/server-stats.js && node --check src/server-stats.js && node --check worker/index.js",
+    "worker:deploy": "wrangler deploy",
+    "worker:dev": "wrangler dev --test-scheduled"
+  },
+  "devDependencies": {
+    "wrangler": "4.165.0"
   }
 }

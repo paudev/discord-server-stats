@@ -1,57 +1,54 @@
 # Discord Server Stats
 
-A standalone Discord member and online-count voice-channel counter service deployed automatically by Vercel from `main`. This project is completely separate from the P2E Discord bot.
+Standalone Discord voice-channel counters hosted on **Vercel**, with an independent **Cloudflare Worker** to trigger automatic updates. No GitHub Actions.
 
-## Features
+## Architecture
 
-- Creates a `📊 SERVER STATS` category with locked voice-channel counters:
-  - `👥 Members: 2,021`
-  - `🟢 Online: 374`
-- Uses Discord's approximate REST API counts; no persistent Discord Gateway process is needed.
-- Counter voice channels are visible but not joinable by `@everyone`.
-- Only renames a counter when its name needs to change.
-- Exposes an authenticated Vercel endpoint to update counters on demand.
+- **Vercel:** serves the Discord REST API updater in `api/server-stats.js` and auto-deploys on GitHub `main` pushes.
+- **Cloudflare Workers:** runs the `worker/index.js` scheduled handler every 10 minutes, calling the authenticated Vercel updater.
+- **Discord:** the updater creates and refreshes a `📊 SERVER STATS` category with `👥 Members` and `🟢 Online` counters using Discord's approximate counts.
 
-## Automatic deployment
+## Configure Vercel (one time)
 
-This repository is connected to the **discord-server-stats** Vercel project. **Pushing to `main` automatically builds and deploys it.** No GitHub Actions deployment workflow is required.
+In Vercel Project Settings → Environment Variables (Production), set:
 
-Deployment and updating Discord counters are separate operations. **Deploying the service does not start a persistent background timer or periodically update Discord.** This repository intentionally contains no GitHub Actions workflow or scheduled job.
-
-## Configure Vercel
-
-In Vercel Project Settings → Environment Variables, set these for **Production**:
-
-- `DISCORD_STATS_BOT_TOKEN` — bot token from https://discord.com/developers/applications (sensitive)
+- `DISCORD_STATS_BOT_TOKEN` — Discord bot token (sensitive)
 - `DISCORD_STATS_GUILD_ID` — Discord server ID
-- `DISCORD_STATS_TRIGGER_SECRET` — a private, long random string for authenticating updates (sensitive)
-- `DISCORD_STATS_CATEGORY_ID` — optional pre-existing category ID
+- `DISCORD_STATS_TRIGGER_SECRET` — long random bearer secret (sensitive)
+- `DISCORD_STATS_CATEGORY_ID` — optional existing category ID
 
-Invite the bot to your server with the necessary channel-management permissions. Enable Discord Developer Mode to copy the server ID.
+Invite the bot to your server with **View Channels**, **Manage Channels**, and appropriate overwrite permissions. Redeploy Vercel after changing environment variables. Manual initialization remains available with an authenticated POST to `https://discord-server-stats.vercel.app/api/server-stats`.
 
-Redeploy after changing environment variables so the production deployment uses the updated configuration.
+## Configure Cloudflare Workers Builds (one time)
 
-## Endpoints
+In Cloudflare Workers & Pages, create a Worker from GitHub using **`paudev/discord-server-stats`**, and fill the creation form as follows:
 
-- `GET /api/health` — shows whether the service has Discord credentials configured.
-- `POST /api/server-stats` — creates or updates the counter channels.
+| Field | Value |
+| --- | --- |
+| Project name | `discord-server-stats` (must match `wrangler.jsonc`) |
+| Build command | Leave blank |
+| Deploy command | `npx wrangler deploy` |
+| Preview command | `npx wrangler preview` (the default; optional previews) |
+| Production branch | `main` |
+| Root directory (if shown) | Repository root `/` |
 
-To invoke the update endpoint, make an authenticated request:
+Click **Deploy**. The repository already includes `wrangler.jsonc` and the Worker source; **do not replace the Vercel API code with Worker code**. Cloudflare imports the separate Worker entry point specified in `wrangler.jsonc`.
 
-```bash
-curl -X POST "https://discord-server-stats.vercel.app/api/server-stats" \
-  -H "Authorization: Bearer YOUR_DISCORD_STATS_TRIGGER_SECRET"
-```
+After creating the Worker, go to **Settings → Variables and Secrets** and create a **Secret**:
 
-This returns HTTP 401 without a valid bearer token and HTTP 503 when mandatory configuration is missing.
+- Name: `TRIGGER_SECRET`
+- Value: the **same value** as Vercel's `DISCORD_STATS_TRIGGER_SECRET`
 
-**For continuous updating:** Vercel Hobby's built-in cron schedule supports daily frequency, not every 10 minutes. A separate scheduler or always-running process is needed for more frequent updates; this repository does not install one by default.
+Save/deploy the secret. **Never paste credentials into `wrangler.jsonc` or commit them to GitHub.**
 
-## Development
+The 10-minute schedule `*/10 * * * *` is already in `wrangler.jsonc` and is deployed with the Worker. Cloudflare may take several minutes for a new Cron Trigger to become active. After setup, verify the Worker's **Observability / Logs** and its **Cron Triggers** configuration. A 401 response indicates the Cloudflare and Vercel secrets differ.
 
-```sh
-npm test
-npm run check
-```
+Vercel and Cloudflare Git integrations will each deploy their own entry point on new pushes to `main`. Vercel handles the API; Cloudflare handles scheduling. They are separate deployments of one repository.
 
-Never commit Discord bot tokens or trigger secrets to GitHub.
+## Test and health
+
+- Vercel health: `GET https://discord-server-stats.vercel.app/api/health`
+- Worker health: the Worker's `*.workers.dev` URL returns a static healthy response but does **not** run an update when visited
+- Local tests: `npm test`, `npm run check`
+
+Discord voice-channel renames have rate limits; updates are skipped when counts haven't changed. Keep the interval at 10 minutes or slower.
