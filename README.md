@@ -1,49 +1,57 @@
 # Discord Server Stats
 
-Standalone Discord member and online-count voice channel counters, deployed to Vercel. This project is **separate** from the P2E Discord bot.
+A standalone Discord member and online-count voice-channel counter service deployed automatically by Vercel from `main`. This project is completely separate from the P2E Discord bot.
 
 ## Features
 
-- Automatically creates a `📊 SERVER STATS` category with voice-channel counters:
+- Creates a `📊 SERVER STATS` category with locked voice-channel counters:
   - `👥 Members: 2,021`
   - `🟢 Online: 374`
-- Uses the Discord REST API's approximate server counts without requiring an always-connected gateway bot.
-- Sets new counter voice channels to visible but not joinable by @everyone.
-- Updates only when the count has changed.
-- GitHub Actions workflow runs approximately every 10 minutes; scheduling delays and Discord channel rate limits may apply.
-- Authenticated Vercel endpoint for manual or external updates.
+- Uses Discord's approximate REST API counts; no persistent Discord Gateway process is needed.
+- Counter voice channels are visible but not joinable by `@everyone`.
+- Only renames a counter when its name needs to change.
+- Exposes an authenticated Vercel endpoint to update counters on demand.
 
-## GitHub Actions setup (recommended for automatic updates)
+## Automatic deployment
 
-1. Create a Discord bot in [Discord Developer Portal](https://discord.com/developers/applications). Invite it with **View Channels**, **Manage Channels** and **Manage Roles** permissions.
-2. Enable Developer Mode in Discord and copy the **Server ID** from the server context menu.
-3. In this repository, open **Settings → Secrets and variables → Actions**.
-   - Add **secret** `DISCORD_STATS_BOT_TOKEN` with your Discord bot token.
-   - Add **variable** `DISCORD_STATS_GUILD_ID` with your Discord Server ID.
-   - Optionally set **variable** `DISCORD_STATS_CATEGORY_ID` to the ID of a pre-existing category.
-4. Go to **Actions → Discord server stats → Run workflow**. On the first run, the category and counters are created if necessary.
-5. The scheduled workflow is disabled until `DISCORD_STATS_GUILD_ID` is set.
+This repository is connected to the **discord-server-stats** Vercel project. **Pushing to `main` automatically builds and deploys it.** No GitHub Actions deployment workflow is required.
 
-## Vercel API (optional)
+Deployment and updating Discord counters are separate operations. **Deploying the service does not start a persistent background timer or periodically update Discord.** This repository intentionally contains no GitHub Actions workflow or scheduled job.
 
-`GET /api/health` reports whether the application has bot credentials configured.
+## Configure Vercel
 
-`POST /api/server-stats` triggers one update. Configure the following Vercel Production environment variables:
+In Vercel Project Settings → Environment Variables, set these for **Production**:
 
-- `DISCORD_STATS_BOT_TOKEN`: your Discord bot token
-- `DISCORD_STATS_GUILD_ID`: your Discord Server ID
-- `DISCORD_STATS_TRIGGER_SECRET`: random secret used as a bearer token
-- `DISCORD_STATS_CATEGORY_ID`: optional existing category ID
+- `DISCORD_STATS_BOT_TOKEN` — bot token from https://discord.com/developers/applications (sensitive)
+- `DISCORD_STATS_GUILD_ID` — Discord server ID
+- `DISCORD_STATS_TRIGGER_SECRET` — a private, long random string for authenticating updates (sensitive)
+- `DISCORD_STATS_CATEGORY_ID` — optional pre-existing category ID
 
-Call the endpoint with `Authorization: Bearer <DISCORD_STATS_TRIGGER_SECRET>`. The endpoint returns 405 for GET; it requires POST.
+Invite the bot to your server with the necessary channel-management permissions. Enable Discord Developer Mode to copy the server ID.
 
-**Note:** Vercel Hobby Cron cannot run at 10-minute intervals. For recurring updates, use the included GitHub Actions schedule instead. The GitHub workflow uses the Discord REST API directly; it does not depend on Vercel credentials or its endpoint.
+Redeploy after changing environment variables so the production deployment uses the updated configuration.
 
-## Tests
+## Endpoints
+
+- `GET /api/health` — shows whether the service has Discord credentials configured.
+- `POST /api/server-stats` — creates or updates the counter channels.
+
+To invoke the update endpoint, make an authenticated request:
+
+```bash
+curl -X POST "https://discord-server-stats.vercel.app/api/server-stats" \
+  -H "Authorization: Bearer YOUR_DISCORD_STATS_TRIGGER_SECRET"
+```
+
+This returns HTTP 401 without a valid bearer token and HTTP 503 when mandatory configuration is missing.
+
+**For continuous updating:** Vercel Hobby's built-in cron schedule supports daily frequency, not every 10 minutes. A separate scheduler or always-running process is needed for more frequent updates; this repository does not install one by default.
+
+## Development
 
 ```sh
 npm test
 npm run check
 ```
 
-Never commit Discord bot tokens or trigger secrets to the repository.
+Never commit Discord bot tokens or trigger secrets to GitHub.
