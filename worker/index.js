@@ -1,39 +1,40 @@
-// Cloudflare Cron Trigger. Vercel remains the only Discord API backend.
-export const VERCEL_STATS_ENDPOINT =
-  "https://discord-server-stats.vercel.app/api/server-stats";
-
-export async function refreshDiscordStats(env, fetcher = globalThis.fetch) {
-  const secret = env?.TRIGGER_SECRET;
-  if (typeof secret !== "string" || secret.length < 16) {
-    throw new Error("Configure TRIGGER_SECRET as a Cloudflare Worker secret");
+import { DurableObject } from 'cloudflare:workers';
+import { refreshDiscordStats } from './scheduler.js';
+// SQLite-backed Durable Object persists Discord's per-channel Retry-After cooldowns.
+// It also serializes scheduled invocations so two concurrent ticks don't race.
+export class StatsSync extends DurableObject {
+  async fetch(request) {
+    if (request.method !== 'POST') return new Response('Method not allowed', { status: 405 });
+    if (this.pending) return Response.json({ ok: true, busy: true });
+    this.pending = (async () => {
+      const cooldowns = await this.ctx.storage.get('cooldowns') ?? {};
+      const result = await refreshDiscordStats(this.env, cooldowns);
+      await this.ctx.storage.put('cooldowns', result.cooldowns);
+      return result;
+    })();
+    try {
+      const result = await this.pending;
+      return Response.json({ ok: true, updated: result.updated?.length ?? 0,
+        deferred: result.deferred?.length ?? 0, unchanged: result.unchanged?.length ?? 0 });
+    } finally {
+      this.pending = null;
+    }
   }
-
-  const response = await fetcher(VERCEL_STATS_ENDPOINT, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${secret}` },
-    signal: AbortSignal.timeout(20_000),
-  });
-
-  if (!response.ok) {
-    // Don't log the response body: it could contain sensitive details.
-    throw new Error(`Vercel Discord stats update returned HTTP ${response.status}`);
-  }
-
-  return response.status;
 }
-
 export default {
-  // Cloudflare calls this handler from the wrangler.jsonc cron schedule.
-  async scheduled(_event, env) {
-    await refreshDiscordStats(env);
-    console.log("[discord-stats-scheduler] Server stats updated");
+  async scheduled(_controller, env) {
+    const id = env.STATS_SYNC.idFromName('default');
+    const response = await env.STATS_SYNC.get(id).fetch('https://internal/tick', { method: 'POST' });
+    if (!response.ok) {
+      throw new Error(`Stats scheduler failed (HTTP ${response.status})`);
+    }
+    const data = await response.json();
+    console.log('[discord-stats-scheduler]', JSON.stringify(data));
   },
-
-  // Lightweight worker health check; no public manual trigger.
   fetch() {
-    return new Response("Discord Server Stats scheduler is deployed.", {
+    return new Response('Discord Server Stats scheduler is deployed.', {
       status: 200,
-      headers: { "Content-Type": "text/plain; charset=utf-8" },
+      headers: { 'Content-Type': 'text/plain; charset=utf-8' },
     });
   },
 };

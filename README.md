@@ -1,54 +1,42 @@
 # Discord Server Stats
 
-Standalone Discord voice-channel counters hosted on **Vercel**, with an independent **Cloudflare Worker** to trigger automatic updates. No GitHub Actions.
+A standalone Discord server counter bot. Vercel provides the authenticated Discord API; a Cloudflare Worker checks the server **once per minute**. This is independent of the P2E Discord bot, with no GitHub Actions workflow.
 
 ## Architecture
 
-- **Vercel:** serves the Discord REST API updater in `api/server-stats.js` and auto-deploys on GitHub `main` pushes.
-- **Cloudflare Workers:** runs the `worker/index.js` scheduled handler every 5 minutes, calling the authenticated Vercel updater.
-- **Discord:** the updater creates and refreshes a `📊 SERVER STATS` category with `👥 Members` and `🟢 Online` counters using Discord's approximate counts.
+- **Vercel** (`api/server-stats.js`): Fetches approximate member/online counts from Discord. It only renames a counter when its value has changed and the channel is not in a Discord cooldown.
+- **Cloudflare Worker** (`worker/index.js`): Cron `* * * * *` (once per minute), calls Vercel with the secret already configured in Cloudflare.
+- **Durable Object** (`StatsSync`): Persists per-channel Discord rate-limit cooldown timestamps so later scheduled checks skip blocked renames. Its SQLite backend is available within Cloudflare Workers Free plan limits. No separate database setup is needed; Wrangler creates the namespace on deployment.
 
-## Configure Vercel (one time)
+### One-minute checks are not guaranteed one-minute channel renames
 
-In Vercel Project Settings → Environment Variables (Production), set:
+Discord enforces its own channel-name update limits. Vercel interprets `429` / `Retry-After` and `X-RateLimit-*` headers. If a channel is cooling down, its update is **deferred** (not retried immediately), while other counters may still update. The Worker keeps checking every minute and attempts the newest count once the cooldown expires. `ok: true` with a nonempty `deferred` array means the check succeeded but Discord blocked some renames temporarily.
 
-- `DISCORD_STATS_BOT_TOKEN` — Discord bot token (sensitive)
-- `DISCORD_STATS_GUILD_ID` — Discord server ID
-- `DISCORD_STATS_TRIGGER_SECRET` — long random bearer secret (sensitive)
-- `DISCORD_STATS_CATEGORY_ID` — optional existing category ID
+## Setup
 
-Invite the bot to your server with **View Channels**, **Manage Channels**, and appropriate overwrite permissions. Redeploy Vercel after changing environment variables. Manual initialization remains available with an authenticated POST to `https://discord-server-stats.vercel.app/api/server-stats`.
+Cloudflare Workers Builds should be connected to the `main` branch of `paudev/discord-server-stats`:
 
-## Configure Cloudflare Workers Builds (one time)
+- **Build command:** leave empty
+- **Deploy command:** `npx wrangler deploy`
+- **Root directory:** `/`
 
-In Cloudflare Workers & Pages, create a Worker from GitHub using **`paudev/discord-server-stats`**, and fill the creation form as follows:
+Wrangler configuration is in `wrangler.jsonc`, including the `StatsSync` SQLite Durable Object binding and migration. Pushing to `main` deploys Vercel and, if Cloudflare Git Builds is connected and enabled, the Worker.
 
-| Field | Value |
-| --- | --- |
-| Project name | `discord-server-stats` (must match `wrangler.jsonc`) |
-| Build command | Leave blank |
-| Deploy command | `npx wrangler deploy` |
-| Preview command | `npx wrangler preview` (the default; optional previews) |
-| Production branch | `main` |
-| Root directory (if shown) | Repository root `/` |
+Store `TRIGGER_SECRET` as a **Cloudflare Worker secret**. It must equal the Vercel `DISCORD_STATS_TRIGGER_SECRET`. Do not put credentials in source code or Wrangler configuration.
 
-Click **Deploy**. The repository already includes `wrangler.jsonc` and the Worker source; **do not replace the Vercel API code with Worker code**. Cloudflare imports the separate Worker entry point specified in `wrangler.jsonc`.
+The Vercel production project needs `DISCORD_STATS_BOT_TOKEN`, `DISCORD_STATS_GUILD_ID`, and `DISCORD_STATS_TRIGGER_SECRET` (plus optional `DISCORD_STATS_CATEGORY_ID`). The bot needs Discord channel-management permissions. The default category is `📊 SERVER STATS` with `👥 Members` and `🟢 Online` voice-channel counters.
 
-After creating the Worker, go to **Settings → Variables and Secrets** and create a **Secret**:
+## Endpoints
 
-- Name: `TRIGGER_SECRET`
-- Value: the **same value** as Vercel's `DISCORD_STATS_TRIGGER_SECRET`
+- `GET https://discord-server-stats.vercel.app/api/health` — reports whether required Vercel configuration is present.
+- `POST https://discord-server-stats.vercel.app/api/server-stats` — manually triggers a check using the `Authorization: Bearer ...` header. A successful request returns `updated`, `unchanged`, `created`, and `deferred`, plus rate-limit cooldown data for the Worker.
+- The Cloudflare Worker HTTP endpoint is a static health message and does **not** trigger a Discord update.
 
-Save/deploy the secret. **Never paste credentials into `wrangler.jsonc` or commit them to GitHub.**
+## Development
 
-The 5-minute schedule `*/5 * * * *` is already in `wrangler.jsonc` and is deployed with the Worker. Cloudflare may take several minutes for a new Cron Trigger to become active. After setup, verify the Worker's **Observability / Logs** and its **Cron Triggers** configuration. A 401 response indicates the Cloudflare and Vercel secrets differ.
+```sh
+npm test
+npm run check
+```
 
-Vercel and Cloudflare Git integrations will each deploy their own entry point on new pushes to `main`. Vercel handles the API; Cloudflare handles scheduling. They are separate deployments of one repository.
-
-## Test and health
-
-- Vercel health: `GET https://discord-server-stats.vercel.app/api/health`
-- Worker health: the Worker's `*.workers.dev` URL returns a static healthy response but does **not** run an update when visited
-- Local tests: `npm test`, `npm run check`
-
-Discord voice-channel renames have restrictive, per-channel rate limits (historically around two renames per ten minutes). Five-minute checks are best-effort, and Discord can delay an actual rename with an HTTP 429. The updater skips unchanged values and the Worker makes no immediate retry.
+The test suite covers rate-limit handling, per-channel cooldowns, global cooldowns, and Worker-to-Vercel payloads.

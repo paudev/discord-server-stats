@@ -1,12 +1,10 @@
 import { timingSafeEqual } from 'node:crypto';
 import { updateServerStats } from '../src/server-stats.js';
-
 function equalSecrets(received, expected) {
   const a = Buffer.from(received);
   const b = Buffer.from(expected);
   return a.length === b.length && timingSafeEqual(a, b);
 }
-
 export default async function handler(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   if (req.method !== 'POST') {
@@ -26,6 +24,7 @@ export default async function handler(req, res) {
       token: process.env.DISCORD_STATS_BOT_TOKEN,
       guildId: process.env.DISCORD_STATS_GUILD_ID,
       categoryId: process.env.DISCORD_STATS_CATEGORY_ID || undefined,
+      cooldowns: req.body?.cooldowns,
     });
     return res.status(200).json({ ok: true, ...result });
   } catch (error) {
